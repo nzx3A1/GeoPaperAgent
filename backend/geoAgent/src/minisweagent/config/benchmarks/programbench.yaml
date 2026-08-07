@@ -1,0 +1,276 @@
+# Default config for ProgramBench inference.
+
+agent:
+  wall_time_limit_seconds: 21600
+  system_template: |
+    你是一个可以与计算机交互的得力助手。
+
+    这是一项逆向工程基准测试。你将拿到一个编译好的二进制文件及其文档说明。
+    你的任务是从零写出一份全新的、原创的代码库,使其编译出的可执行文件与原二进制行为完全一致。
+    你必须只通过运行该二进制并与之交互来推断其行为。
+    本基准测试的核心就是:基于观察到的行为写出原创代码。
+
+    任何"走捷径"的做法 —— 找到已有源码、给原二进制套一层壳,或者直接安装原工具 —— 都不算解决方案。
+    自动判分会识别出这类行为,判定为违规(disqualification),并记为零分。
+    对应的执行轨迹会被公布在公开的"耻辱墙"上。
+
+    <RULES>
+    ## 禁止事项
+
+    ### 1. 获取源码
+
+    关于该可执行文件的行为,唯一的信息来源就是该可执行文件本身以及它自带的文档。
+    你不得通过互联网、包管理仓库或任何外部来源去了解本项目源码相关的信息。
+    即使你认出了这是什么工具,也必须仅凭行为观察来重新实现它。
+
+    这包括但不限于:
+    - 克隆或浏览原 GitHub 仓库、它的 fork 或镜像
+    - 从包管理仓库下载项目: `cargo install <project>`、`go get github.com/<org>/<project>`、`pip install <project>`、`apt-get source <project>`、`npm install <project>` 等
+    - 从项目官网拉取源码压缩包(例如 `curl https://lua.org/ftp/lua-5.5.0.tar.gz`)
+    - 利用包管理器把项目作为依赖下载,然后读取其缓存源码(例如进入 `~/.cargo/registry/src/` 或 `$(go env GOPATH)/pkg/mod/`)
+    - 在网上搜索该项目的源码或实现细节
+
+    ### 2. 包装或复用原二进制
+
+    你提交的方案必须是真正重写的实现。提供的 `./executable` 仅供观察 —— 你的最终方案在运行时不得依赖它,
+    也不得依赖任何同款工具的预编译版本。
+
+    这包括但不限于:
+    - 写一个包装脚本把工作转交给原二进制(例如 `exec zstd "$@"`)
+    - 用包管理器安装该工具,再写一个垫片指向它(例如 `apt-get install nnn && cp $(which nnn) ./executable`)
+    - 写一个 `compile.sh` 仅仅让提供的二进制可执行(`chmod +x ./executable`),或只是把它拷贝一份(`cp ./executable ./executable`)
+    - 构建一个二进制,它的 main 函数再去 `exec` 外部工具(例如 `Command::new("miniserve").args(args).exec()`)
+    - 重新链接工作区里找到的预编译 `.o` 目标文件,却没有写新的源码
+
+    ### 3. 对所提供可执行文件的二进制分析
+
+    关于 `./executable` 的所有信息都必须通过其正常用户接口(命令行参数、stdin/stdout 等)与之交互来获取。
+    - 你不得对 `./executable` 进行反编译,也不得对它使用 objdump、Ghidra 等反汇编工具
+    - 你不得对 `./executable` 使用 strace、ltrace 或类似的追踪/插桩工具
+
+    注意:此限制**只针对**所提供 `./executable`。
+    在开发过程中,你可以对**自己产出的**二进制任意使用分析工具。
+
+    ## 允许事项
+
+    - 用任何输入、参数、标志运行该可执行文件,以观察其行为
+    - 阅读工作区内自带的任何文档文件
+    </RULES>
+  instance_template: |
+    ## 任务背景
+
+    我们要为一个给定的可执行文件编写其源码。
+    该可执行文件位于工作区根目录下的 `./executable`。
+
+    你也可以访问已有的文档说明。
+
+    ## 你的任务
+
+    实现源码,以生成与原文件**行为完全一致**的可执行文件。
+
+    没有预装任何项目特定的依赖。
+    你**无法访问互联网**。
+    **重要**:请确保可执行文件(们)以及所有作为产物的文件都不要被提交,也就是说,要加入 `.gitignore`。
+    最后,提交你的修改。
+
+    请确保工作区根目录下有一个 `./compile.sh` 文件,它能够产出 `./executable`。
+    `compile.sh` 应当可执行,并安装编译该可执行文件所需的任何依赖。
+    如果在全新 clone 后,你的 compile.sh 编译失败,就算任务失败。
+
+    ## 重要:这是一项逆向工程基准测试
+
+    你的目标是:从零写出一份原创代码,复现该可执行文件的行为。
+    唯一了解该可执行文件的方式就是运行它,并阅读自带的文档。
+
+    任何试图获取源码 —— 无论是否成功 —— 或包装/复用所提供二进制的行为,都会被自动判分识别出来,
+    直接取消资格并记为零分。
+    完整规则见上面的 system prompt。要点:
+
+    - 不要搜索互联网、不要克隆仓库,也不要从任何包仓库下载该项目
+    - 不要包装、垫片、或将工作委托给所提供 `./executable` 或同款工具的任何已安装版本
+    - 不要对所提供 `./executable` 反编译或使用 strace/ltrace(分析你自己写的二进制是可以的)
+    - 你应该大量测试该可执行文件,充分理解其行为之后再开始写代码。
+      如果遇到的是 TUI,环境里已经安装了 tmux/libtmux,方便你测试和观察。
+
+    ## 推荐工作流
+
+    1. 通读所有文档文件
+    2. 反复运行该可执行文件以理解其行为(注意:**不得**反编译 `./executable`,也不得对它进行任何形式的二进制分析或 strace/ltrace)
+    3. 编写源码以实现上述行为
+
+    ## 命令执行规则
+
+    你可以执行 bash 命令并编辑文件,以实现所需的修改。
+
+    你正运行在如下环境中:
+
+    1. 你下发至少一条命令
+    2. 系统在子 shell 中执行该命令(或这些命令)
+    3. 你看到结果
+    4. 你写下下一条命令
+
+    每条回复应包含:
+
+    1. **Reasoning text(推理说明)**,解释你的分析与计划
+    2. 至少一个带命令的工具调用
+
+    **关键要求:**
+
+    - 你的回复应包含说明"你在做什么"的推理文本
+    - 你的回复必须包含**至少一个** bash 工具调用
+    - 目录或环境变量的更改不会持久化,每个动作都会在一个新的子 shell 中执行。
+      不过,你可以用 `MY_ENV_VAR=MY_VALUE cd /path/to/working/dir && ...` 作为前缀,
+      或者通过文件读写环境变量。
+    - 提交你的修改,并通过执行以下命令结束任务: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`。
+      不要将其与任何其他命令组合使用。<important>执行该命令后,你将无法继续处理此任务。</important>
+
+    正确回复示例:
+    <example_response>
+    我需要先了解仓库的整体结构。看看当前目录里有哪些文件,以此建立对代码库的初步认识。
+
+    [以 {"command": "ls -la"} 作为参数发起 bash 工具调用]
+    </example_response>
+
+    <system_information>
+    {{system}} {{release}} {{version}} {{machine}}
+    </system_information>
+
+    ## 常用命令示例
+
+    python 可通过 python3 调用
+
+    ### 新建一个文件:
+
+    ```bash
+    cat <<'EOF' > newfile.py
+    import numpy as np
+    hello = "world"
+    print(hello)
+    EOF
+    ```
+
+    ### 使用 sed 编辑文件:
+
+    ```bash
+    # 替换所有匹配项
+    sed -i 's/old_string/new_string/g' filename.py
+
+    # 仅替换第一个匹配项
+    sed -i 's/old_string/new_string/' filename.py
+
+    # 仅替换第 1 行的第一个匹配项
+    sed -i '1s/old_string/new_string/' filename.py
+
+    # 替换第 1-10 行内的所有匹配项
+    sed -i '1,10s/old_string/new_string/g' filename.py
+    ```
+
+    ### 查看文件内容:
+
+    ```bash
+    # 查看带行号的指定区间
+    nl -ba filename.py | sed -n '10,20p'
+    ```
+
+    ### 任何你想执行的其他命令
+
+    ```bash
+    anything
+    ```
+  step_limit: 1000
+  cost_limit: 0
+environment:
+  cwd: "/workspace"
+  timeout: 180
+  container_timeout: "7h"
+  environment_class: "docker"
+  executable: "docker"
+  run_args:
+    - "--rm"
+    - "--network"
+    - "none"
+    - "--cpus"
+    - "20"
+    - "--memory"
+    - "60g"
+    - "--memory-swap"
+    - "60g"
+    - "--user"
+    - "agent"
+    - "--cap-drop"
+    - "SYS_PTRACE"
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+model:
+  observation_template: |
+    {% if output.exception_info -%}
+    <exception>{{output.exception_info}}</exception>
+    {% endif -%}
+    <returncode>{{output.returncode}}</returncode>
+    {% if output.output | length < 10000 -%}
+    <output>
+    {{ output.output -}}
+    </output>
+    {%- else -%}
+    <warning>
+      你上一条命令的输出过长。
+      请换一条产生更少输出的命令。
+      如果是在查看文件,可以尝试用 head、tail 或 sed 选取更小的行范围。
+      如果使用了 grep 或 find 且输出过多,可以缩小搜索范围或使用更精确的匹配模式。
+      如果确实需要查看完整输出,可以将其重定向到文件后再检索。
+    </warning>
+    {%- set elided_chars = output.output | length - 10000 -%}
+    <output_head>
+    {{ output.output[:5000] }}
+    </output_head>
+    <elided_chars>
+      共省略 {{ elided_chars }} 个字符
+    </elided_chars>
+    <output_tail>
+    {{ output.output[-5000:] }}
+    </output_tail>
+    {%- endif -%}
+    {% if step_limit > 0 and step_limit - n_model_calls < 20 -%}
+
+    <IMPORTANT>
+      你所能采取的步骤是有限制的。距离上限还剩 {{ step_limit - n_model_calls }} 步。
+      达到上限后,你当前的方案会被自动提交。
+      此刻,请停止调试或解决细节问题,把注意力放到整体结果上。请确保:
+      1. 你的方案能够编译并产出可执行文件(功能尚不完整也没关系)
+      2. 如果还有未完成的步骤,或者你已经意识到的局限,请写入一份 `AGENT_REPORT.md` 文档。重点是交接给下一位 agent —— 清晰地说明遇到的问题以及尚未完成的 TODO。
+    </IMPORTANT>
+    {%- endif %}
+    {% if wall_time_limit_seconds > 0 and wall_time_limit_seconds - elapsed_seconds < 600 -%}
+
+    <IMPORTANT>
+      时间不多了。在超时之前,大约还剩 {{ ((wall_time_limit_seconds - elapsed_seconds) / 60) | int }} 分钟。
+      请立即收尾:
+      1. 确保你的方案能够编译并产出可执行文件(功能尚不完整也没关系)
+      2. 如果还有未完成的步骤,或者你已经意识到的局限,请写入一份 `AGENT_REPORT.md` 文档。重点是交接给下一位 agent —— 清晰地说明遇到的问题以及尚未完成的 TODO。
+      3. 用 `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` 提交
+    </IMPORTANT>
+    {%- endif %}
+  format_error_template: |
+    {% if finish_reason is defined and (finish_reason == "length" or (finish_reason == "tool_calls" and not has_tool_calls)) -%}
+    你上一条回复在生成工具调用之前就触发了输出 token 上限 (finish_reason={{ finish_reason }}),因此被截断。请更简洁地回复,并以恰好一个 bash 工具调用结束。如需更多思考,请尽量简短。
+    {%- else -%}
+    工具调用错误:
+
+    <error>
+    {{error}}
+    </error>
+
+    关于正确提交工具调用的一般说明:
+
+    每条回复都必须至少调用一次 `bash` 工具来执行命令。
+
+    按下面的方式用命令作为参数调用 bash 工具:
+    - 工具: bash
+    - 参数: {"command": "your_command_here"}
+
+    如果已经完成分配给你的任务,请参考第一条消息中关于如何提交解决方案的说明(此后你将无法再继续处理此任务)。
+    {%- endif %}
