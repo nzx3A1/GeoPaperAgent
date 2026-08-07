@@ -1,0 +1,38 @@
+{
+  "name": "geopaperagent-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "type-check": "vue-tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@microsoft/fetch-event-source": "^2.0.1",
+    "axios": "^1.19.0",
+    "dayjs": "^1.11.21",
+    "dompurify": "^3.4.13",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.14.3",
+    "markdown-it": "^15.0.0",
+    "pdfjs-dist": "^6.2.108",
+    "pinia": "^4.0.2",
+    "vue": "^3.5.41",
+    "vue-echarts": "^8.0.1",
+    "vue-router": "^5.2.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "24.13.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.4.11",
+    "jsdom": "^30.0.1",
+    "typescript": "6.0.3",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.3.9"
+  }
+}
