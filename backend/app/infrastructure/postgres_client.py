@@ -7,7 +7,7 @@ from functools import lru_cache
 
 import asyncpg
 
-from app.core.config import get_settings
+from app.config import get_settings
 
 
 class PostgresClient:

@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from pymilvus import MilvusClient as PyMilvusClient
 
-from app.core.config import get_settings
+from app.config import get_settings
 
 
 class MilvusClient:

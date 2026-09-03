@@ -1,9 +1,10 @@
 """MinerU Markdown 论文解析器。
 
 该脚本面向 PDF 论文经 MinerU 导出的 full.md 文件，按论文题名、基本信息、
-章节树、表格、图片和块级公式组织为阶段 1 JSON。正文结构主要依赖 Markdown
+章节树、表格、图片和块级公式组织为阶段 C JSON。正文结构主要依赖 Markdown
 标题与正则表达式解析；基本信息先用规则提取，并预留可选的大模型补全入口。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -12,10 +13,13 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 SECTION_HEADING_RE = re.compile(r"^(#{2,6})\s+(.+?)\s*$")
@@ -45,7 +49,7 @@ class SectionNode:
     id: str
     title: str
     raw_content: str = ""
-    children: list["SectionNode"] = field(default_factory=list)
+    children: list[SectionNode] = field(default_factory=list)
     table: list[dict[str, Any]] = field(default_factory=list)
     images: list[dict[str, Any]] = field(default_factory=list)
     formulas: list[dict[str, str]] = field(default_factory=list)
@@ -63,28 +67,54 @@ class SectionNode:
             "images": self.images,
             "formulas": self.formulas,
             "content": self.content,
+            "raw_text": self.raw_content,
         }
+
+
+class LLMPaperMetadata(BaseModel):
+    """约束 LLM 从论文首页提取的 Paper 元数据字段。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = None
+    title_en: str | None = None
+    abstract: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    affiliations: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    doi: str | None = None
+    journal: str | None = None
+    volume: str | None = None
+    issue: str | None = None
+    publish_year: int | None = None
+    publish_date: date | None = None
+    language: str | None = None
+
+
+MetadataExtractor = Callable[[str], Mapping[str, Any] | LLMPaperMetadata]
 
 
 class AMarkdownParser:
     """解析论文 Markdown，并输出按章节组织的结构化 JSON。"""
 
-    produced_by = "src/parser/AMarkdownParser.py"
+    produced_by = "app.parsers.CMarkdownParser.AMarkdownParser"
 
     def __init__(
         self,
         use_llm_basic_info: bool = False,
+        metadata_extractor: MetadataExtractor | None = None,
         table_image_detector: TableImageDetector | None = None,
         table_continuation_threshold: float = TABLE_CONTINUATION_THRESHOLD,
     ) -> None:
         """初始化解析器，并配置切分表格图片的检测器与置信度阈值。"""
 
         self.use_llm_basic_info = use_llm_basic_info
+        self.metadata_extractor = metadata_extractor
         self.table_image_detector = table_image_detector or detect_table_image_with_picodet
         self.table_continuation_threshold = table_continuation_threshold
 
     def parse_file(self, input_file: str | Path) -> dict[str, Any]:
-        """读取 Markdown 文件并解析为目标阶段 1 JSON。"""
+        """读取 Markdown 文件并解析为目标阶段 C JSON。"""
 
         markdown_path = Path(input_file)
         text = read_text(markdown_path)
@@ -118,7 +148,11 @@ class AMarkdownParser:
 
         basic_information = extract_basic_information(basic_lines, title, references)
         if self.use_llm_basic_info:
-            basic_information = merge_llm_basic_information(basic_lines, basic_information)
+            basic_information = merge_llm_basic_information(
+                basic_lines,
+                basic_information,
+                extractor=self.metadata_extractor,
+            )
 
         toc = self._parse_toc(
             lines,
@@ -132,7 +166,7 @@ class AMarkdownParser:
             "title": title,
             "basicInformation": basic_information,
             "toc": [node.to_dict() for node in toc],
-            "_stage": 1,
+            "_stage": 3,
             "_produced_by": self.produced_by,
             "input_file": input_file,
         }
@@ -290,21 +324,40 @@ def extract_basic_information(lines: list[str], title: str, references: str) -> 
         "abstract": clean_inline_text(abstract, strip_markup=False),
         "title": title,
         "authors": authors,
+        "affiliations": [organization] if organization else [],
         "keywords": keywords,
         "publish_organization": organization,
+        "title_en": None,
+        "doi": None,
+        "journal": None,
+        "volume": None,
+        "issue": None,
+        "publish_year": None,
+        "publish_date": None,
+        "language": detect_language("\n".join(clean_lines[:40])),
         "references": references,
     }
+
+
+def detect_language(text: str) -> str | None:
+    """根据首页中英文字符数量给出保守的论文语言代码。"""
+
+    chinese_count = len(re.findall(r"[\u4e00-\u9fff]", text))
+    latin_count = len(re.findall(r"[A-Za-z]", text))
+    if chinese_count == latin_count == 0:
+        return None
+    return "zh" if chinese_count >= latin_count / 3 else "en"
 
 
 def extract_labeled_block(text: str, starts: list[str], stops: list[str]) -> str:
     """提取“摘要/Abstract”等标签后的连续文本，直到下一个标签。"""
 
-    start_pattern = r"(?:%s)\s*[:：]?\s*" % "|".join(starts)
+    start_pattern = rf"(?:{'|'.join(starts)})\s*[:：]?\s*"
     start_match = re.search(start_pattern, text, flags=re.IGNORECASE)
     if not start_match:
         return ""
     tail = text[start_match.end() :]
-    stop_pattern = r"\n?\s*(?:%s)\s*[:：]?" % "|".join(stops)
+    stop_pattern = rf"\n?\s*(?:{'|'.join(stops)})\s*[:：]?"
     stop_match = re.search(stop_pattern, tail, flags=re.IGNORECASE)
     return tail[: stop_match.start()].strip() if stop_match else tail.strip()
 
@@ -343,7 +396,9 @@ def split_author_names(text: str) -> list[str]:
     names = []
     for part in parts:
         name = part.strip(" .·")
-        if 1 < len(name) <= 40 and not re.search(r"(大学|学院|公司|研究院|Department|Institute|Abstract)", name, re.IGNORECASE):
+        if 1 < len(name) <= 40 and not re.search(
+            r"(大学|学院|公司|研究院|Department|Institute|Abstract)", name, re.IGNORECASE
+        ):
             names.append(name)
     return names
 
@@ -364,37 +419,65 @@ def extract_publish_organization(clean_lines: list[str]) -> str:
 
     organizations = []
     for line in clean_lines:
-        if line.startswith(("(", "（")) and re.search(r"(大学|学院|公司|研究院|实验室|Department|Institute|Laboratory)", line, re.IGNORECASE):
+        if line.startswith(("(", "（")) and re.search(
+            r"(大学|学院|公司|研究院|实验室|Department|Institute|Laboratory)", line, re.IGNORECASE
+        ):
             organizations.append(line.strip("()（） "))
     return " ".join(organizations)
 
 
-def merge_llm_basic_information(lines: list[str], basic_information: dict[str, Any]) -> dict[str, Any]:
+def extract_metadata_with_project_llm(markdown_header: str) -> LLMPaperMetadata:
+    """调用项目 ``llmClient``，以结构化输出方式提取论文首页元数据。"""
+
+    from app.core.agent.model.llmClient import create_llm_agent
+
+    instructions = (
+        "你是严谨的论文首页元数据抽取器。只能使用给定文本，不得猜测；"
+        "缺失字段返回 null 或空列表。authors 只放作者姓名，affiliations 只放作者单位。"
+    )
+    prompt = (
+        "从下面的 MinerU Markdown 首页内容提取标题、英文标题、摘要、作者列表、作者单位列表、"
+        "关键词、DOI、期刊名、卷号、期号、发表年份、发表日期和语言代码。\n\n"
+        f"{markdown_header[:20000]}"
+    )
+    agent = create_llm_agent(instructions=instructions, output_type=LLMPaperMetadata, retries=2)
+    return agent.run_sync(prompt).output
+
+
+def merge_llm_basic_information(
+    lines: list[str],
+    basic_information: dict[str, Any],
+    *,
+    extractor: MetadataExtractor | None = None,
+) -> dict[str, Any]:
     """可选使用项目 LLMClient 补全基本信息；失败时保持规则提取结果。"""
 
     try:
-        from src.utils.llm_client import LLMClient
-
-        prompt = (
-            "请从以下论文 Markdown 头部提取 JSON，字段为 abstract、title、authors、"
-            "keywords、publish_organization。不要编造不存在的信息。\n\n"
-            + "\n".join(lines[:80])
-        )
-        response = LLMClient().chat_json(
-            [
-                {"role": "system", "content": "你是论文元数据抽取助手，只输出 JSON。"},
-                {"role": "user", "content": prompt},
-            ]
-        )
-        if isinstance(response, dict):
-            merged = dict(basic_information)
-            for key in ("abstract", "title", "authors", "keywords", "publish_organization"):
-                if response.get(key):
-                    merged[key] = response[key]
-            return merged
+        response = (extractor or extract_metadata_with_project_llm)("\n".join(lines[:120]))
+        values = response.model_dump(mode="json") if isinstance(response, LLMPaperMetadata) else dict(response)
+        merged = dict(basic_information)
+        for key in (
+            "abstract",
+            "title",
+            "title_en",
+            "authors",
+            "affiliations",
+            "keywords",
+            "doi",
+            "journal",
+            "volume",
+            "issue",
+            "publish_year",
+            "publish_date",
+            "language",
+        ):
+            if values.get(key):
+                merged[key] = values[key]
+        if merged.get("affiliations"):
+            merged["publish_organization"] = " ".join(str(item) for item in merged["affiliations"])
+        return merged
     except Exception:
         return basic_information
-    return basic_information
 
 
 def collect_section_records(lines: list[str], start_index: int, end_index: int) -> list[tuple[str, list[str]]]:
@@ -691,11 +774,7 @@ def extract_captioned_image_tables(
                 and following_numbers
                 and set(caption_numbers).isdisjoint(following_numbers)
             )
-            if (
-                stripped.startswith(("#", "<table", "$$"))
-                or is_different_table
-                or nonempty_line_count >= 12
-            ):
+            if stripped.startswith(("#", "<table", "$$")) or is_different_table or nonempty_line_count >= 12:
                 image_match = None
                 break
 
@@ -732,10 +811,7 @@ def extract_captioned_image_tables(
         table_numbers = extract_labeled_numbers(caption, labels=("表", "Table"))
         contexts = find_table_reference_contexts(reference_text, table_numbers)
         # 将图片表格中的 Markdown 相对引用转换为相对于 full.md 的绝对路径后写入 JSON。
-        image_paths = [
-            serialize_asset_path(item.group(1).strip(), asset_base_dir)
-            for item in table_image_matches
-        ]
+        image_paths = [serialize_asset_path(item.group(1).strip(), asset_base_dir) for item in table_image_matches]
         tables.append(
             {
                 # 图片表格只保存干净路径，去掉 Markdown 的 ![](  ) 包装符号。
@@ -777,10 +853,7 @@ def extract_images(
 
         caption, caption_end = extract_caption_after(text, group_end, keywords=("图", "Fig"))
         # 普通图片与图片表格统一输出绝对路径，便于后续模块直接读取资源文件。
-        paths = [
-            serialize_asset_path(item.group(1).strip(), asset_base_dir)
-            for item in group
-        ]
+        paths = [serialize_asset_path(item.group(1).strip(), asset_base_dir) for item in group]
         figure_numbers = extract_labeled_numbers(caption, labels=("图", "Fig"))
         images.append(
             {
@@ -985,7 +1058,7 @@ def project_root() -> Path:
 def default_output_path() -> Path:
     """返回默认聚合 JSON 输出路径。"""
 
-    return project_root() / "output" / "stage_01_mineru_parse.json"
+    return project_root() / "output" / "stage_03_markdown_sections.json"
 
 
 def resolve_markdown_inputs(input_path: Path) -> list[Path]:
@@ -994,7 +1067,9 @@ def resolve_markdown_inputs(input_path: Path) -> list[Path]:
     if input_path.is_file():
         return [input_path]
     if input_path.is_dir():
-        markdown_files = sorted(input_path.rglob("*.md"))
+        markdown_files = sorted(input_path.rglob("full.md"))
+        if not markdown_files:
+            markdown_files = sorted(input_path.rglob("*.md"))
         if markdown_files:
             return markdown_files
     raise FileNotFoundError(f"没有找到可解析的 Markdown 文件: {input_path}")
@@ -1006,7 +1081,7 @@ def build_cli_result(results: list[dict[str, Any]], input_path: Path) -> dict[st
     if len(results) == 1:
         return results[0]
     return {
-        "_stage": 1,
+        "_stage": 3,
         "_produced_by": AMarkdownParser.produced_by,
         "input_path": str(input_path.resolve()),
         "document_count": len(results),
@@ -1021,10 +1096,12 @@ def main() -> None:
     cli.add_argument(
         "input",
         nargs="?",
-        default=project_root() / "data" / "mineru_output"/"鄂尔多斯盆地奥陶系马家沟组白云岩储层特征及成因机制_吴东旭",
+        default=project_root() / "data" / "mineru_output",
         help="MinerU 导出的 full.md 路径或目录；不传则默认扫描 data/mineru_output",
     )
-    cli.add_argument("-o", "--output", help="输出 JSON 文件路径；目录输入且不传时默认写入 output/amarkdown_parser_results.json")
+    cli.add_argument(
+        "-o", "--output", help="输出 JSON 文件路径；目录输入且不传时默认写入 output/amarkdown_parser_results.json"
+    )
     cli.add_argument("--use-llm-basic-info", action="store_true", help="尝试用项目 LLMClient 补全基本信息")
     args = cli.parse_args()
 

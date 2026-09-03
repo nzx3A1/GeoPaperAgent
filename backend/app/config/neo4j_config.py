@@ -1,28 +1,51 @@
-"""Neo4j 数据库连接配置。
+"""Neo4j 图数据库配置。
 
-配置从环境变量或 .env 读取，默认值仅用于本地开发。写入器可分别使用 schema
-数据库和 document 数据库存放概念 schema 与论文抽取结果。
+本文件独立管理 Neo4j 服务地址、登录凭据和目标数据库名称。
 """
-from __future__ import annotations
 
-import os
-from dataclasses import dataclass
+from functools import lru_cache
 
-from .model_config import PROJECT_ROOT, _load_env_file
+from .base_config import BaseConfigSettings
 
 
-_load_env_file(PROJECT_ROOT / ".env")
+class Neo4jSettings(BaseConfigSettings):
+    """定义 Neo4j 图数据库连接配置。"""
+
+    neo4j_uri: str = "bolt://127.0.0.1:7787"
+    neo4j_username: str = "neo4j"
+    neo4j_password: str = "123456789"
+    neo4j_database: str = "neo4j"
+
+    @property
+    def uri(self) -> str:
+        """兼容旧代码使用的简写服务地址属性。"""
+
+        return self.neo4j_uri
+
+    @property
+    def username(self) -> str:
+        """兼容旧代码使用的简写用户名属性。"""
+
+        return self.neo4j_username
+
+    @property
+    def password(self) -> str:
+        """兼容旧代码使用的简写密码属性。"""
+
+        return self.neo4j_password
+
+    @property
+    def database(self) -> str:
+        """兼容旧代码使用的简写数据库名属性。"""
+
+        return self.neo4j_database
 
 
-@dataclass(frozen=True)
-class Neo4jConfig:
-    """单个 Neo4j 数据库连接配置。"""
-
-    uri: str = "bolt://localhost:7687"
-    username: str = "neo4j"
-    password: str = "123456789"
-    database: str = "petrommkg-schema"
+Neo4jConfig = Neo4jSettings
 
 
+@lru_cache(maxsize=1)
+def load_neo4j_settings() -> Neo4jSettings:
+    """读取并缓存 Neo4j 配置。"""
 
-
+    return Neo4jSettings()

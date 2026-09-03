@@ -121,7 +121,9 @@ class SSHConfig:
 
     @classmethod
     def from_env(cls) -> SSHConfig:
-        """Load settings from ``SSH_*`` environment variables."""
+        """从 backend/.env 和当前进程环境读取 ``SSH_*`` 配置。"""
+
+        load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
         key_file = os.getenv("SSH_KEY_FILE", "").strip()
         known_hosts = os.getenv("SSH_KNOWN_HOSTS", "").strip()
         return cls(
@@ -139,6 +141,7 @@ class SSHConfig:
 
 class SSHClient:
     """Context-managed client for listing and downloading remote PDF files."""
+
     """
     中文说明：
     - 使用此类可以建立 SSH 连接并通过 SFTP 列出或下载远程 PDF 文件。
@@ -296,6 +299,7 @@ class SSHClient:
             temporary = destination.with_name(destination.name + ".part")
             callback: Callable[[int, int], None] | None = None
             if progress:
+
                 def callback(done: int, total: int, path: str = remote_path) -> None:
                     progress(path, done, total)
 

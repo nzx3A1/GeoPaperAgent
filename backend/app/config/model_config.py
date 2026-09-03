@@ -3,12 +3,12 @@
 本文件集中保存 LLM、VLM、Embedding 和 MinerU 的当前开发期配置。现阶段按用户
 要求保留明文默认值，同时仍允许通过环境变量或 .env 覆盖这些默认值。
 """
+
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -25,10 +25,10 @@ def _env_bool(name: str, default: bool) -> bool:
     raise ValueError(f"环境变量 {name} 必须是 true/false、1/0、yes/no 或 on/off")
 
 
-def _load_env_file(path: Path) -> Dict[str, str]:
+def _load_env_file(path: Path) -> dict[str, str]:
     """读取简单的 .env 文件，并将未设置的键注入当前进程环境。"""
 
-    values: Dict[str, str] = {}
+    values: dict[str, str] = {}
     if not path.exists():
         return values
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -43,7 +43,8 @@ def _load_env_file(path: Path) -> Dict[str, str]:
     return values
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# 配置文件位于 backend/app/config，项目数据与 .env 均以 backend 为根目录。
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _load_env_file(PROJECT_ROOT / ".env")
 
 
@@ -59,6 +60,7 @@ class OpenAICompatibleConfig:
     timeout_secs: float = 120.0
     enable_thinking: bool = False
 
+
 @dataclass(frozen=True)
 class OpenAIVLMCompatibleConfig:
     """OpenAI 兼容视觉模型配置。"""
@@ -71,6 +73,7 @@ class OpenAIVLMCompatibleConfig:
     max_tokens: int = 8192
     timeout_secs: float = 120.0
     enable_thinking: bool = False
+
 
 @dataclass(frozen=True)
 class EmbeddingConfig:
@@ -89,7 +92,13 @@ class EmbeddingConfig:
 class MinerUConfig:
     """MinerU 云端接口配置。"""
 
-    token: str = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI1OTIwMDEwNiIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc4MDMwMDU5MywiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiMTgzNzMyOTg1NzMiLCJvcGVuSWQiOm51bGwsInV1aWQiOiI0MzU0Y2UwOS0zMzBmLTRlZTYtOWM0NS0zMzkxOGQxNWVmOWIiLCJlbWFpbCI6IiIsImV4cCI6MTc4ODA3NjU5M30.JTbfGAAmQHprsWUJ0Dk1FnlR_93_Cb1uaMe9hjrfUMDR8ou9DfbG9oCWlJN1AoanMaa0TJGqvdyZ0Pnf_0yHZw"
+    token: str = (
+        "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ."
+        "eyJqdGkiOiI1OTIwMDEwNiIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc4MDMwMDU5Mywi"
+        "Y2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiMTgzNzMyOTg1NzMiLCJvcGVuSWQiOm51bGwsInV1aWQi"
+        "OiI0MzU0Y2UwOS0zMzBmLTRlZTYtOWM0NS0zMzkxOGQxNWVmOWIiLCJlbWFpbCI6IiIsImV4cCI6MTc4ODA3NjU5M30."
+        "JTbfGAAmQHprsWUJ0Dk1FnlR_93_Cb1uaMe9hjrfUMDR8ou9DfbG9oCWlJN1AoanMaa0TJGqvdyZ0Pnf_0yHZw"
+    )
     batch_url: str = "https://mineru.net/api/v4/file-urls/batch"
     timeout_secs: float = 120.0
 
@@ -138,11 +147,12 @@ def load_model_settings() -> ModelSettings:
         timeout_secs=float(os.getenv("VLM_TIMEOUT_SECS", "120")),
         enable_thinking=_env_bool("VLM_ENABLE_THINKING", OpenAIVLMCompatibleConfig.enable_thinking),
     )
+    embedding_dimensions = os.getenv("EMBEDDING_DIMENSIONS")
     embedding = EmbeddingConfig(
         base_url=os.getenv("EMBEDDING_BASE_URL", EmbeddingConfig.base_url),
         api_key=os.getenv("EMBEDDING_API_KEY", EmbeddingConfig.api_key),
         model=os.getenv("EMBEDDING_MODEL", EmbeddingConfig.model),
-        dimensions=int(os.getenv("EMBEDDING_DIMENSIONS")) if os.getenv("EMBEDDING_DIMENSIONS") else EmbeddingConfig.dimensions,
+        dimensions=int(embedding_dimensions) if embedding_dimensions else EmbeddingConfig.dimensions,
         batch_size=int(os.getenv("EMBEDDING_BATCH_SIZE", "32")),
         timeout_secs=float(os.getenv("EMBEDDING_TIMEOUT_SECS", "60")),
     )
@@ -156,7 +166,9 @@ def load_model_settings() -> ModelSettings:
         model=os.getenv("SUMMARY_MODEL", SummaryConfig.model),
         fallback_model=os.getenv("SUMMARY_FALLBACK_MODEL", SummaryConfig.fallback_model),
         max_tokens=int(os.getenv("SUMMARY_MAX_TOKENS", str(SummaryConfig.max_tokens))),
-        request_interval_secs=float(os.getenv("SUMMARY_REQUEST_INTERVAL_SECS", str(SummaryConfig.request_interval_secs))),
+        request_interval_secs=float(
+            os.getenv("SUMMARY_REQUEST_INTERVAL_SECS", str(SummaryConfig.request_interval_secs))
+        ),
         enable_thinking=_env_bool("SUMMARY_ENABLE_THINKING", SummaryConfig.enable_thinking),
     )
     return ModelSettings(llm=llm, vlm=vlm, embedding=embedding, mineru=mineru, summary=summary)

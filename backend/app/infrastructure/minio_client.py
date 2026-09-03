@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 from functools import lru_cache
+from pathlib import Path, PurePosixPath
 
 from minio import Minio
+from minio.error import S3Error
 from urllib3 import PoolManager, Timeout
 
-from app.core.config import get_settings
+from app.config import get_settings
 
 
 class MinioClient:
@@ -71,9 +74,96 @@ class MinioClient:
                 http_client.clear()
 
     async def healthcheck(self) -> bool:
+        """检查 MinIO 服务是否可访问。"""
+
         client = await self.connect()
         await asyncio.to_thread(client.list_buckets)
         return True
+
+    async def ensure_bucket(self, bucket_name: str) -> None:
+        """确保业务桶存在；不存在时创建该桶。"""
+
+        name = _validate_bucket_name(bucket_name)
+        client = await self.connect()
+        exists = await asyncio.to_thread(client.bucket_exists, name)
+        if not exists:
+            try:
+                await asyncio.to_thread(client.make_bucket, name, location=self._region)
+            except S3Error as exc:
+                # 多个任务并发建桶时，另一个任务可能已经先完成创建。
+                if exc.code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+                    raise
+
+    async def upload_file(
+        self,
+        bucket_name: str,
+        object_name: str,
+        file_path: str | Path,
+        *,
+        content_type: str | None = None,
+    ) -> str:
+        """上传单个本地文件，并返回可持久化到数据库的 ``minio://`` 地址。"""
+
+        source = Path(file_path).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError(f"待上传文件不存在：{source}")
+        bucket = _validate_bucket_name(bucket_name)
+        object_key = _normalise_object_name(object_name)
+        await self.ensure_bucket(bucket)
+        client = await self.connect()
+        guessed_type = content_type or mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+        await asyncio.to_thread(
+            client.fput_object,
+            bucket,
+            object_key,
+            str(source),
+            content_type=guessed_type,
+        )
+        return self.object_uri(bucket, object_key)
+
+    async def upload_directory(
+        self,
+        bucket_name: str,
+        object_prefix: str,
+        local_directory: str | Path,
+    ) -> dict[Path, str]:
+        """递归上传目录内全部文件，并返回“本地绝对路径到 MinIO 地址”的映射。"""
+
+        directory = Path(local_directory).expanduser().resolve()
+        if not directory.is_dir():
+            raise NotADirectoryError(f"待上传目录不存在：{directory}")
+        prefix = _normalise_object_name(object_prefix)
+        uploaded: dict[Path, str] = {}
+        for source in sorted((path for path in directory.rglob("*") if path.is_file()), key=str):
+            relative = source.relative_to(directory).as_posix()
+            object_name = f"{prefix}/{relative}"
+            uploaded[source.resolve()] = await self.upload_file(bucket_name, object_name, source)
+        return uploaded
+
+    @staticmethod
+    def object_uri(bucket_name: str, object_name: str) -> str:
+        """把桶名和对象键转换为统一的 ``minio://bucket/key`` 地址。"""
+
+        return f"minio://{_validate_bucket_name(bucket_name)}/{_normalise_object_name(object_name)}"
+
+
+def _validate_bucket_name(bucket_name: str) -> str:
+    """校验业务桶名，避免空桶名或路径字符进入 SDK 调用。"""
+
+    name = bucket_name.strip()
+    if not name or "/" in name or "\\" in name:
+        raise ValueError(f"非法 MinIO 桶名：{bucket_name!r}")
+    return name
+
+
+def _normalise_object_name(object_name: str) -> str:
+    """规范并校验 MinIO 对象键，禁止绝对路径和上级目录片段。"""
+
+    raw_name = object_name.strip().replace("\\", "/")
+    path = PurePosixPath(raw_name)
+    if not raw_name or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError(f"非法 MinIO 对象键：{object_name!r}")
+    return path.as_posix()
 
 
 @lru_cache(maxsize=1)

@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
-from app.core.config import get_settings
+from app.config import get_settings
 
 
 class Neo4jClient:

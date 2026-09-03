@@ -17,6 +17,11 @@ frontend/dist/
 # Env
 .env
 
+# Backend pipeline runtime artifacts
+backend/data/
+backend/output/
+backend/logs/
+
 # IDE
 .vscode/
 .idea/
