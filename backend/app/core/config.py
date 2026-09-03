@@ -10,7 +10,26 @@ class Settings(BaseSettings):
     app_name: str = "GeoPaperAgent API"
     api_v1_prefix: str = "/api/v1"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
-    database_url: str = "postgresql://postgres:postgres@127.0.0.1:5432/geopaperAgent"
+
+    # Local defaults match backend/compose.yml. Override every secret in production.
+    database_url: str = "postgresql://postgresql:123456789@127.0.0.1:5532/geopaperagent"
+    postgres_pool_min_size: int = 1
+    postgres_pool_max_size: int = 10
+    redis_url: str = "redis://:123456789@127.0.0.1:6479/0"
+    minio_endpoint: str = "127.0.0.1:9000"
+    minio_access_key: str = "geopaperagent"
+    minio_secret_key: str = "123456789"
+    minio_secure: bool = False
+    minio_region: str = "us-east-1"
+    milvus_uri: str = "http://127.0.0.1:19530"
+    milvus_token: str = ""
+    milvus_database: str = "default"
+    neo4j_uri: str = "bolt://127.0.0.1:7787"
+    neo4j_username: str = "neo4j"
+    neo4j_password: str = "123456789"
+    neo4j_database: str = "neo4j"
+    infrastructure_connect_timeout: float = 10.0
+
     mineru_api_key: str = ""
     mineru_base_url: str = "https://mineru.net"
     mineru_model_version: str = "vlm"

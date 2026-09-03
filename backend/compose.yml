@@ -1,0 +1,150 @@
+name: geopaperagent
+
+# GeoPaperAgent 本地基础设施。
+# 注意：账号和密码按要求直接保存在本文件中，适合本地开发；部署到生产环境前应改用 Docker Secret 或环境变量。
+services:
+  # PostgreSQL：保存论文元数据、解析任务状态及结构化业务数据。
+  postgres:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/quay.io/sclorg/postgresql-15-c9s:latest
+    restart: unless-stopped
+    environment:
+      # 当前使用的是 sclorg 镜像，初始化变量名与 Docker 官方 postgres 镜像不同。
+      POSTGRESQL_DATABASE: geopaperagent
+      POSTGRESQL_USER: postgresql
+      POSTGRESQL_PASSWORD: "123456789"
+    ports:
+      - "5532:5432"
+    volumes:
+      # PostgreSQL 数据持久化到宿主机的独立目录。
+      - /root/GeoPaperAgentData/postgresql:/var/lib/pgsql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRESQL_USER -d $$POSTGRESQL_DATABASE"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis：提供缓存、临时状态及异步任务所需的高速键值存储。
+  redis:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/redis:7.0.14
+    restart: unless-stopped
+    environment:
+      # Redis 没有用户名；客户端使用此密码连接。
+      REDIS_PASSWORD: "123456789"
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    ports:
+      - "6479:6379"
+    volumes:
+      - /root/GeoPaperAgentData/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO：GeoPaperAgent 的 S3 兼容对象存储，用于保存 PDF、图片及其他文件。
+  minio:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/quay.io/minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: geopaperagent
+      MINIO_ROOT_PASSWORD: "123456789"
+    command: server /data --console-address ":9001"
+    ports:
+      # 9000 是 S3 API，9001 是网页管理控制台。
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - /root/GeoPaperAgentData/minio-business:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # etcd：保存 Milvus 的集合、分片等元数据，只作为 Milvus 的内部依赖。
+  etcd:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/quay.io/coreos/etcd:v3.5.5
+    restart: unless-stopped
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls=http://0.0.0.0:2379 --data-dir=/etcd
+    ports:
+      - "2479:2379"
+    volumes:
+      - /root/GeoPaperAgentData/milvus-etcd:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Milvus 专用 MinIO：保存向量索引和持久化对象数据，不与业务 MinIO 混用。
+  milvus-minio:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/quay.io/minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: milvusadmin
+      MINIO_ROOT_PASSWORD: "123456789"
+    command: server /data
+    volumes:
+      - /root/GeoPaperAgentData/milvus-minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Milvus：向量数据库，用于保存论文嵌入并执行语义相似度检索。
+  milvus:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/milvusdb/milvus:v2.4.5
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_REGION: us-east-1
+      # 必须与上方 milvus-minio 的账号和密码保持一致。
+      MINIO_ACCESS_KEY_ID: milvusadmin
+      MINIO_SECRET_ACCESS_KEY: "123456789"
+    command: ["milvus", "run", "standalone"]
+    ports:
+      # 19530 是客户端连接端口，9091 是管理和健康检查端口。
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - /root/GeoPaperAgentData/milvus:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      milvus-minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+
+  # Neo4j：图数据库，用于保存论文、作者、机构、引用等知识图谱关系。
+  neo4j:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/neo4j:5.22.0
+    restart: unless-stopped
+    environment:
+      # 固定用户名为 neo4j，斜杠后为初始化密码。
+      NEO4J_AUTH: "neo4j/123456789"
+    ports:
+      # 7474 是网页管理界面，7687 是 Bolt 客户端连接端口。
+      - "7574:7474"
+      - "7787:7687"
+    volumes:
+      - /root/GeoPaperAgentData/neo4j/data:/data
+      - /root/GeoPaperAgentData/neo4j/logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#*/}\" 'RETURN 1'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
