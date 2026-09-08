@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.schemas.base import JsonArray, SchemaModel
+from app.schemas.base import EmbeddingVector, JsonArray, SchemaModel
 
 
 class SectionBase(SchemaModel):
@@ -45,4 +45,5 @@ class Section(SectionBase):
     """从章节表读取的完整数据。"""
 
     id: int = Field(description="数据库自增主键")
+    embedding: EmbeddingVector = Field(default=None, description="qwen3-embedding:0.6b 生成的 1024 维章节向量")
     created_at: datetime = Field(description="记录创建时间")

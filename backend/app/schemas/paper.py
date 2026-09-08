@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from pydantic import Field
 
-from app.schemas.base import JsonArray, JsonObject, SchemaModel
+from app.schemas.base import EmbeddingVector, JsonArray, JsonObject, SchemaModel
 
 
 class PaperBase(SchemaModel):
@@ -69,5 +69,6 @@ class Paper(PaperBase):
     """从论文表读取的完整数据。"""
 
     id: int = Field(description="数据库自增主键")
+    embedding: EmbeddingVector = Field(default=None, description="qwen3-embedding:0.6b 生成的 1024 维论文向量")
     created_at: datetime = Field(description="记录创建时间")
     updated_at: datetime = Field(description="记录最后更新时间")

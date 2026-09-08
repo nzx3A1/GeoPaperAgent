@@ -121,27 +121,39 @@ def test_stage_b_retries_transient_result_download(tmp_path: Path) -> None:
 
 
 def test_stage_c_merges_project_llm_metadata() -> None:
-    """验证阶段 C 将 LLM 返回的期刊、卷期和作者信息并入基础信息。"""
+    """验证阶段 C 将完整首页传给 LLM，并写入摘要、作者和期刊元数据。"""
 
     markdown = """# 储层研究
 张三，李四
 （地质大学）
-摘要：规则摘要
-关键词：储层；成岩作用
+摘要
+这是位于摘要标题下一行的完整规则摘要。
 
 ## 1 引言
 正文。
 """
-    parser = AMarkdownParser(
-        use_llm_basic_info=True,
-        metadata_extractor=lambda _header: {
+    rule_result = AMarkdownParser().parse_text(markdown)
+    assert rule_result["basicInformation"]["authors"] == ["张三", "李四"]
+    assert rule_result["basicInformation"]["abstract"] == "这是位于摘要标题下一行的完整规则摘要。"
+
+    def extract_metadata(header: str) -> dict[str, Any]:
+        """断言大模型补全入口收到标题、作者和多行摘要的完整首页内容。"""
+
+        assert "张三，李四" in header
+        assert "这是位于摘要标题下一行的完整规则摘要。" in header
+        return {
+            "abstract": "这是位于摘要标题下一行的完整规则摘要。",
             "authors": ["张三", "李四"],
             "affiliations": ["地质大学"],
             "journal": "地质学报",
             "volume": "12",
             "issue": "3",
             "publish_year": 2026,
-        },
+        }
+
+    parser = AMarkdownParser(
+        use_llm_basic_info=True,
+        metadata_extractor=extract_metadata,
     )
 
     result = parser.parse_text(markdown)
@@ -149,6 +161,7 @@ def test_stage_c_merges_project_llm_metadata() -> None:
     assert result["basicInformation"]["journal"] == "地质学报"
     assert result["basicInformation"]["volume"] == "12"
     assert result["basicInformation"]["authors"] == ["张三", "李四"]
+    assert result["basicInformation"]["abstract"] == "这是位于摘要标题下一行的完整规则摘要。"
     assert result["_stage"] == 3
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import logging
 import os
 import re
 import sys
@@ -39,6 +40,7 @@ TABLE_CONTINUATION_THRESHOLD = 0.95
 _TABLE_LAYOUT_MODEL: Any | None = None
 _CUDA_DLL_HANDLES: list[Any] = []
 TableImageDetector = Callable[[Path, float], bool]
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -144,12 +146,14 @@ class AMarkdownParser:
         first_section_index = find_first_section_heading_index(lines, stop_index=reference_start)
         preamble_end = first_section_index if first_section_index is not None else reference_start or len(lines)
         preamble_lines = lines[title_index + 1 : preamble_end]
-        basic_lines, intro_lines = split_preamble_lines(preamble_lines)
+        _basic_lines, intro_lines = split_preamble_lines(preamble_lines)
+        # 首页元数据需要覆盖整个章节前区域：无关键词或多行摘要时，摘要正文会被划入 intro_lines。
+        metadata_lines = [f"# {title}", *preamble_lines]
 
-        basic_information = extract_basic_information(basic_lines, title, references)
+        basic_information = extract_basic_information(metadata_lines, title, references)
         if self.use_llm_basic_info:
             basic_information = merge_llm_basic_information(
-                basic_lines,
+                metadata_lines,
                 basic_information,
                 extractor=self.metadata_extractor,
             )
@@ -427,8 +431,9 @@ def extract_publish_organization(clean_lines: list[str]) -> str:
 
 
 def extract_metadata_with_project_llm(markdown_header: str) -> LLMPaperMetadata:
-    """调用项目 ``llmClient``，以结构化输出方式提取论文首页元数据。"""
+    """使用统一配置的 CUP DeepSeek 文本模型提取论文首页元数据。"""
 
+    from app.config.model_config import load_model_settings
     from app.core.agent.model.llmClient import create_llm_agent
 
     instructions = (
@@ -440,7 +445,13 @@ def extract_metadata_with_project_llm(markdown_header: str) -> LLMPaperMetadata:
         "关键词、DOI、期刊名、卷号、期号、发表年份、发表日期和语言代码。\n\n"
         f"{markdown_header[:20000]}"
     )
-    agent = create_llm_agent(instructions=instructions, output_type=LLMPaperMetadata, retries=2)
+    # 明确传入项目统一 LLM 配置，保证 Markdown 解析与其余文本流程共用 CUP 模型。
+    agent = create_llm_agent(
+        instructions=instructions,
+        output_type=LLMPaperMetadata,
+        config=load_model_settings().llm,
+        retries=2,
+    )
     return agent.run_sync(prompt).output
 
 
@@ -476,7 +487,8 @@ def merge_llm_basic_information(
         if merged.get("affiliations"):
             merged["publish_organization"] = " ".join(str(item) for item in merged["affiliations"])
         return merged
-    except Exception:
+    except Exception as error:
+        LOGGER.warning("论文首页元数据大模型补全失败，保留规则提取结果：%s", error)
         return basic_information
 
 

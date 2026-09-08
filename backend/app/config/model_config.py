@@ -25,6 +25,15 @@ def _env_bool(name: str, default: bool) -> bool:
     raise ValueError(f"环境变量 {name} 必须是 true/false、1/0、yes/no 或 on/off")
 
 
+def normalize_api_key(value: str) -> str:
+    """规范 API 密钥，兼容配置中误写 ``Bearer `` 前缀的情况。"""
+
+    normalized = value.strip()
+    if normalized.lower().startswith("bearer "):
+        return normalized[7:].strip()
+    return normalized
+
+
 def _load_env_file(path: Path) -> dict[str, str]:
     """读取简单的 .env 文件，并将未设置的键注入当前进程环境。"""
 
@@ -52,9 +61,18 @@ _load_env_file(PROJECT_ROOT / ".env")
 class OpenAICompatibleConfig:
     """OpenAI 兼容聊天模型配置。"""
 
-    base_url: str = "http://10.18.19.66:8000/v1"
-    api_key: str = "sk-lwctfhzpjhwclurfgdtpkwynqkawporxgvrhkjrtbuujayij"
-    model: str = "qwen-3.6-27B-FP8"
+    # base_url: str = "http://10.18.19.66:8000/v1"
+    # api_key: str = "sk-lwctfhzpjhwclurfgdtpkwynqkawporxgvrhkjrtbuujayij"
+    # model: str = "qwen-3.6-27B-FP8"
+    # temperature: float = 0.0
+    # max_tokens: int = 8192
+    # timeout_secs: float = 120.0
+    # enable_thinking: bool = False
+
+    base_url: str = "https://assistant.cup.edu.cn/api/v1"
+    # 密钥仅从 LLM_API_KEY 或 OPENAI_API_KEY 环境变量读取，避免写入源码。
+    api_key: str = ""
+    model: str = "deepseek-r1-cup"
     temperature: float = 0.0
     max_tokens: int = 8192
     timeout_secs: float = 120.0
@@ -66,9 +84,9 @@ class OpenAIVLMCompatibleConfig:
     """OpenAI 兼容视觉模型配置。"""
 
     # 中文说明：视觉流程使用用户指定的内网多模态服务，与文本 LLM 配置相互独立。
-    base_url: str = "http://10.18.19.66:8000/v1"
-    api_key: str = "sk-0e3c52e6065a4ef4a1b044c2fe5098d5"
-    model: str = "qwen-3.6-27B-FP8"
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: str = "sk-ws-H.PDDPDYM.Wz8k.MEUCIDy8itXpiWHEySseVu2WWVhTBboDR0khXqcRXTR1cFN8AiEAmG-508xOo_6wryhN5LrxRqAZyHJ7uWC0qGVzpoBdvFw"
+    model: str = "qwen3.7-flash"
     temperature: float = 0.0
     max_tokens: int = 8192
     timeout_secs: float = 120.0
@@ -107,8 +125,8 @@ class MinerUConfig:
 class SummaryConfig:
     """自底向上章节总结使用的模型与输出长度配置。"""
 
-    model: str = "qwen-3.6-27B-FP8"
-    fallback_model: str = "qwen-3.6-27B-FP8"
+    model: str = "deepseek-r1-cup"
+    fallback_model: str = "deepseek-r1-cup"
     max_tokens: int = 2000
     request_interval_secs: float = 1.0
     enable_thinking: bool = False
@@ -130,7 +148,9 @@ def load_model_settings() -> ModelSettings:
 
     llm = OpenAICompatibleConfig(
         base_url=os.getenv("LLM_BASE_URL", os.getenv("OPENAI_BASE_URL", OpenAICompatibleConfig.base_url)),
-        api_key=os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", OpenAICompatibleConfig.api_key)),
+        api_key=normalize_api_key(
+            os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", OpenAICompatibleConfig.api_key))
+        ),
         model=os.getenv("LLM_MODEL", OpenAICompatibleConfig.model),
         temperature=float(os.getenv("LLM_TEMPERATURE", "0")),
         max_tokens=int(os.getenv("LLM_MAX_TOKENS", str(OpenAICompatibleConfig.max_tokens))),
@@ -139,8 +159,8 @@ def load_model_settings() -> ModelSettings:
     )
     vlm = OpenAIVLMCompatibleConfig(
         base_url=os.getenv("VLM_BASE_URL", OpenAIVLMCompatibleConfig.base_url),
-        # 未单独配置视觉密钥时复用文本模型密钥，保证同一 SiliconFlow 账户下配置一致。
-        api_key=os.getenv("VLM_API_KEY", llm.api_key),
+        # 文本模型与视觉模型可使用不同服务，未配置时保留视觉模型自身的默认密钥。
+        api_key=os.getenv("VLM_API_KEY", OpenAIVLMCompatibleConfig.api_key),
         model=os.getenv("VLM_MODEL", OpenAIVLMCompatibleConfig.model),
         temperature=float(os.getenv("VLM_TEMPERATURE", "0")),
         max_tokens=int(os.getenv("VLM_MAX_TOKENS", str(OpenAIVLMCompatibleConfig.max_tokens))),

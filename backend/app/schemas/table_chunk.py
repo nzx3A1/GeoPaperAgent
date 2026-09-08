@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field, JsonValue
 
-from app.schemas.base import JsonObject, SchemaModel
+from app.schemas.base import EmbeddingVector, JsonObject, SchemaModel
 
 
 class TableChunkBase(SchemaModel):
@@ -49,4 +49,5 @@ class TableChunk(TableChunkBase):
     """从表格块表读取的完整数据。"""
 
     id: int = Field(description="数据库自增主键")
+    embedding: EmbeddingVector = Field(default=None, description="qwen3-embedding:0.6b 生成的 1024 维表格描述向量")
     created_at: datetime = Field(description="记录创建时间")

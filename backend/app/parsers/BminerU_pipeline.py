@@ -215,11 +215,26 @@ class MinerUClient:
         last_error: httpx.HTTPError | OSError | None = None
         for attempt in range(1, self.download_max_attempts + 1):
             try:
-                with self.http.stream("GET", zip_url) as response:
-                    response.raise_for_status()
-                    with archive_path.open("wb") as archive:
-                        for block in response.iter_bytes(1024 * 1024):
-                            archive.write(block)
+                # 结果 ZIP 位于独立 OSS/CDN 域名；每次重试建立新连接，避免复用已被 CDN 关闭的 TLS 连接。
+                if self._owns_http_client:
+                    with httpx.Client(
+                        timeout=self.timeout,
+                        follow_redirects=True,
+                        trust_env=False,
+                        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+                    ) as download_client:
+                        with download_client.stream("GET", zip_url, headers={"Connection": "close"}) as response:
+                            response.raise_for_status()
+                            with archive_path.open("wb") as archive:
+                                for block in response.iter_bytes(1024 * 1024):
+                                    archive.write(block)
+                else:
+                    # 测试或调用方注入客户端时保留其 Transport，便于控制网络行为。
+                    with self.http.stream("GET", zip_url, headers={"Connection": "close"}) as response:
+                        response.raise_for_status()
+                        with archive_path.open("wb") as archive:
+                            for block in response.iter_bytes(1024 * 1024):
+                                archive.write(block)
                 return
             except (httpx.HTTPError, OSError) as exc:
                 last_error = exc

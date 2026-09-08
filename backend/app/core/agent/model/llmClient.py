@@ -151,3 +151,12 @@ def ask_llm_sync(prompt: str, *, message_history: Sequence[ModelMessage] | None 
     """使用项目默认 LLM 同步生成文本。"""
 
     return get_llm_client().generate_sync(prompt, message_history=message_history)
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def main() -> None:
+        result = await ask_llm("你好，世界！")
+        print(result)
+
+    asyncio.run(main())
