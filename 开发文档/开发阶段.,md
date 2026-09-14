@@ -1,0 +1,108 @@
+建议把下一阶段目标定为：先完成一个“纯文本、可追溯、可中断恢复”的 Agent MVP，再扩展科研工具、多模态和长任务优化。
+
+开发文档给出了完整目标架构，但目前更像产品蓝图；实际开发需要先补齐检索接口、任务状态、证据数据模型和验收标准。文档中的六阶段路线可参考[开发文档.md](</C:/Users/nzx/Desktop/Python/毕业论文项目/GeoPaperAgent/开发文档/开发文档.md:1563>)。
+
+## 当前项目状态判断
+
+静态检查显示：
+
+- PDF 解析、章节树、Chunk、PostgreSQL 入库已经实现。
+- `paper`、`section`、`text_chunk` 已有向量生成脚本，且支持 HNSW 索引：[embed_database_records.py](</C:/Users/nzx/Desktop/Python/毕业论文项目/GeoPaperAgent/backend/app/parsers/utils/embed_database_records.py:124>)。
+- 已有 PydanticAI LLM 调用封装：[llmClient.py](</C:/Users/nzx/Desktop/Python/毕业论文项目/GeoPaperAgent/backend/app/core/agent/model/llmClient.py:59>)。
+- FastAPI、Celery、Redis、SSE 依赖已经加入：[pyproject.toml](</C:/Users/nzx/Desktop/Python/毕业论文项目/GeoPaperAgent/backend/pyproject.toml:10>)。
+- 但 [main.py](</C:/Users/nzx/Desktop/Python/毕业论文项目/GeoPaperAgent/backend/app/main.py>)、API 和 Agent 主体目前基本为空。
+- 当前迁移文件只正式管理五张论文知识库表，Agent 任务、证据、报告等表还没有。
+- 工作区目前有未提交的模型配置修改和未跟踪的 `parsers/utils`，正式开始下一阶段前应先建立基线提交。
+
+## 推荐开发路线
+
+| 阶段 | 核心目标 | 主要工作 | 完成标准 |
+|---|---|---|---|
+| 0. 基线冻结 | 确认知识库可作为稳定输入 | 固化 pgvector 迁移；确认三张表向量完整率、维度和 HNSW；保存20个检索测试问题 | 数据库可重建，20个问题能稳定返回相关论文和章节 |
+| 1. 分级检索服务 | 实现文档中的论文→章节→Chunk检索 | 查询向量化、混合检索、过滤、去重、分数归一化、可选重排 | 输入地质问题，可返回带论文、章节、页码的 Top-K Chunk |
+| 2. Agent 基础设施 | 让长任务可持久化和观察 | AgentState、ResearchPlan、ToolResult；任务表、步骤表、事件表；FastAPI、Celery、SSE | 任务可创建、查询、取消、失败重试，刷新页面后状态不丢失 |
+| 3. Agent MVP | 打通最短研究闭环 | Planner、Executor、三个检索工具、答案综合、循环次数和 Token 预算 | 完成“问题→计划→检索→阅读→带引用回答” |
+| 4. Evidence System | 保证科研结论可追溯 | Evidence、Claim、Claim-Evidence、Verifier、证据不足回检 | 每个主要结论可定位到论文、章节、Chunk、页码 |
+| 5. Workspace 与科研工具 | 从问答升级为科研执行 | Workspace、文件工具、表格工具、Python分析、绘图、Artifact登记、超时和路径白名单 | Agent 可生成 CSV、统计结果、图片，并能安全恢复工具失败 |
+| 6. 多模态 | 分析表格和地质图件 | MinIO读取、表格结构化、VLM图件分析、结果缓存、图文证据绑定 | 指定图表可输出结构化结果并进入 Evidence |
+| 7. 报告与长任务优化 | 形成最终科研产品 | 报告生成、动态规划、Reflection、Context压缩、Research Memory | 能稳定生成带引用的专题 Markdown/PDF/DOCX 报告 |
+| 8. 前端与评测 | 产品化并量化效果 | 六个页面、60个真实任务集、检索和证据指标、日志监控 | 得到真实可复现的完成率、引用准确率和 Token 数据 |
+
+## 第一阶段应该具体开发什么
+
+最优先的是“分级检索服务”，因为 Planner、Evidence 和报告都依赖它。
+
+建议先实现以下接口：
+
+```text
+POST /api/v1/search/papers
+POST /api/v1/search/sections
+POST /api/v1/search/chunks
+GET  /api/v1/papers/{paper_id}
+GET  /api/v1/sections/{section_id}/chunks
+```
+
+检索链路：
+
+```text
+研究问题
+  ↓
+论文级 Top 50
+  ↓
+限定论文内章节级 Top 30
+  ↓
+限定章节内 Chunk Top 20
+  ↓
+去重与重排
+  ↓
+返回 5～10 条候选证据
+```
+
+MVP 阶段建议继续使用现有 PostgreSQL + pgvector，不必立即把检索迁移到 Milvus。只有实际压测表明召回延迟或数据规模成为瓶颈后，再引入额外向量数据库。
+
+## Agent 数据库建议
+
+新增一个版本化迁移，第一版建立这些表即可：
+
+- `research_task`：研究主题、状态、预算、当前状态快照。
+- `research_plan_item`：任务计划及依赖关系。
+- `tool_run`：工具名称、参数、结果、错误、耗时。
+- `task_event`：供 SSE 回放执行过程。
+- `evidence`：论文、章节、Chunk、页码、内容快照、内容哈希。
+- `claim`：Agent 形成的研究结论。
+- `claim_evidence`：结论与证据的多对多关系。
+- `artifact`：CSV、图片、分析文件等成果。
+- `report`：报告版本、正文和生成状态。
+
+Evidence 中不要只保存文本，必须保留原始记录 ID 和 `content_hash`，防止数据库内容变化后引用失真。
+
+## 第一个端到端里程碑
+
+用开发文档中的案例作为唯一主线：
+
+> 鄂尔多斯盆地延长组长7段沉积环境研究
+
+第一版只要求：
+
+1. Planner 生成5～8个研究步骤。
+2. 分级检索找到相关论文、章节和文本 Chunk。
+3. 生成至少3条研究结论。
+4. 每条结论绑定至少一条 Evidence。
+5. 输出一份带论文、章节、页码引用的 Markdown 报告。
+6. 前端或 SSE 能看到任务执行过程。
+7. 中断后可以从已完成步骤继续执行。
+
+先不加入 Bash、复杂动态规划、全量图片向量化和自动观点融合。纵向闭环可靠后再逐步增加。
+
+## 时间安排建议
+
+按一人开发估算：
+
+- 第1周：知识库验收、检索服务。
+- 第2～3周：任务状态、API、Celery/SSE、Agent MVP。
+- 第4周：Evidence、Verifier、基础报告。
+- 第5周：Workspace、Python/表格工具、安全控制。
+- 第6～7周：图表多模态分析。
+- 第8周：动态规划、上下文压缩、前端完善和60任务评测。
+
+文档中“完成率86%”“Token降低35%”应暂时视为目标指标，等60个任务集真实运行后再写成项目结果。历史记录截至9月11日时向量入库还未全部完成；本路线以你今天确认“数据库知识库已完成”为当前状态，并把阶段0保留为正式验收关口。

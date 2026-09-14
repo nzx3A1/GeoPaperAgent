@@ -71,10 +71,10 @@ class OpenAICompatibleConfig:
 
     base_url: str = "https://assistant.cup.edu.cn/api/v1"
     # 密钥仅从 LLM_API_KEY 或 OPENAI_API_KEY 环境变量读取，避免写入源码。
-    api_key: str = ""
+    api_key: str = "2ae48efd-0a6d-6e51-8d55-1762525bc094"
     model: str = "deepseek-r1-cup"
     temperature: float = 0.0
-    max_tokens: int = 8192
+    # max_tokens: int = 8192
     timeout_secs: float = 120.0
     enable_thinking: bool = False
 
@@ -88,7 +88,7 @@ class OpenAIVLMCompatibleConfig:
     api_key: str = "sk-ws-H.PDDPDYM.Wz8k.MEUCIDy8itXpiWHEySseVu2WWVhTBboDR0khXqcRXTR1cFN8AiEAmG-508xOo_6wryhN5LrxRqAZyHJ7uWC0qGVzpoBdvFw"
     model: str = "qwen3.7-flash"
     temperature: float = 0.0
-    max_tokens: int = 8192
+    # max_tokens: int = 8192
     timeout_secs: float = 120.0
     enable_thinking: bool = False
 
